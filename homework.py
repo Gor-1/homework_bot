@@ -28,19 +28,18 @@ HOMEWORK_VERDICTS = {
 
 def check_tokens():
     """Если все токены доступны возвращает True а в противном случаи False."""
+    list_tokens = [
+        PRACTICUM_TOKEN,
+        TELEGRAM_TOKEN,
+        TELEGRAM_CHAT_ID
+    ]
     check_token = True
-    if not PRACTICUM_TOKEN:
-        logging.critical(
-            'Отсутствует обязательная переменная окружения: PRACTICUM_TOKEN')
-        check_token = False
-    if not TELEGRAM_TOKEN:
-        logging.critical(
-            'Отсутствует обязательная переменная окружения: TELEGRAM_TOKEN')
-        check_token = False
-    if not TELEGRAM_CHAT_ID:
-        logging.critical(
-            'Отсутствует обязательная переменная окружения: TELEGRAM_CHAT_ID')
-        check_token = False
+    for token in list_tokens:
+        if not token:
+            logging.critical(
+                f'Отсутствует обязательная переменная окружения: {token}'
+            )
+            check_token = False
     return check_token
 
 
@@ -61,14 +60,18 @@ def get_api_answer(timestamp):
     приведя его из формата JSON к типам данных Python.
     """
     params = {'from_date': timestamp}
-    logging.info(f'Отправка запроса на {ENDPOINT} с параметрами {params}')
     try:
+        logging.info(f'Отправка запроса на {ENDPOINT} с параметрами {params}')
         response = requests.get(ENDPOINT, headers=HEADERS, params=params)
+        if response.status_code != HTTPStatus.OK:
+            logging.error(
+                f'Запрос к {ENDPOINT} вернул ошибку: {response.status_code}'
+            )
+            raise HTTPRequestError(response)
+        else:
+            return response.json()
     except requests.RequestException as e:
-        logging.error(f'при запросе к API возникает исключение: {e}')
-    if response.status_code != HTTPStatus.OK:
-        raise HTTPRequestError(response)
-    return response.json()
+        logging.error(f'При запросе к API возникает исключение: {e}')
 
 
 def check_response(response):
@@ -96,7 +99,8 @@ def check_response(response):
 
 def parse_status(homework):
     """Извлекает из информации о домашней работе статус этой работы."""
-    if not homework.get('homework_name'):
+    homework_name = homework.get('homework_name')
+    if not homework_name:
         error_msg = 'Отсутствует имя проекта!'
         logging.warning(error_msg)
         raise KeyError(error_msg)
@@ -107,7 +111,6 @@ def parse_status(homework):
         raise ParseStatusError(error_msg)
 
     homework_status = homework.get('status')
-    homework_name = homework.get('homework_name')
     verdict = HOMEWORK_VERDICTS.get(homework_status)
 
     if homework_status not in HOMEWORK_VERDICTS:
@@ -120,11 +123,13 @@ def parse_status(homework):
 
 def main():
     """Основная логика работы бота."""
+    if not check_tokens():
+        exit()
+
     messages_sends = {
         'error': None,
     }
-    if not check_tokens():
-        exit()
+
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     timestamp = int(time.time())
 
@@ -132,9 +137,9 @@ def main():
         try:
             response = get_api_answer(timestamp)
             homeworks = check_response(response)
-            if len(homeworks) == 0:
+            if not homeworks:
                 logging.debug('Ответ API пуст: нет домашних работ.')
-                break
+                continue
             for homework in homeworks:
                 message = parse_status(homework)
                 if messages_sends.get('homework_name') != message:
